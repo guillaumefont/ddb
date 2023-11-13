@@ -1,55 +1,157 @@
 
-use num_traits::{AsPrimitive, FromPrimitive, ToPrimitive, Unsigned};
 use std::io::{Result, Write};
-use std::ops::{BitAnd, BitOrAssign, Shl, ShrAssign};
 
-pub fn varint_length<N: Unsigned + ShrAssign<u8>>(value: N) -> usize {
+pub fn len_varint_u32(value: u32) -> usize {
     let mut length = 0;
     let mut value = value;
     loop {
         length += 1;
         value >>= 7;
-        if value.is_zero() {
+        if value == 0 {
             break;
         }
     }
     length
 }
 
-pub fn varint_write<
+pub fn len_varint_u64(value: u64) -> usize {
+    let mut length = 0;
+    let mut value = value;
+    loop {
+        length += 1;
+        value >>= 7;
+        if value == 0 {
+            break;
+        }
+    }
+    length
+}
+
+pub fn len_varint_usize(value: usize) -> usize {
+    let mut length = 0;
+    let mut value = value;
+    loop {
+        length += 1;
+        value >>= 7;
+        if value == 0 {
+            break;
+        }
+    }
+    length
+}
+
+pub fn write_varint_u32<
     W: Write,
-    N: AsPrimitive<u8> + ToPrimitive + Copy + Unsigned + ShrAssign<u8> + BitAnd<N, Output = N>,
 >(
-    mut value: N,
+    mut value: u32,
     writer: &mut W,
 ) -> Result<()> {
     loop {
-        let mut byte: u8 = value.to_u8().unwrap() & 0b01111111;
+        let mut byte: u8 = (value as u8) & 0b01111111;
         value >>= 7;
-        if !value.is_zero() {
+        if value != 0 {
             byte |= 0b10000000;
         }
         writer.write_all(&[byte])?;
-        if value.is_zero() {
+        if value == 0 {
             break;
         }
     }
     Ok(())
 }
 
-pub fn varint_read<
+pub fn write_varint_u64<
+    W: Write,
+>(
+    mut value: u64,
+    writer: &mut W,
+) -> Result<()> {
+    loop {
+        let mut byte: u8 = (value as u8) & 0b01111111;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0b10000000;
+        }
+        writer.write_all(&[byte])?;
+        if value == 0 {
+            break;
+        }
+    }
+    Ok(())
+}
+
+pub fn write_varint_usize<
+    W: Write,
+>(
+    mut value: usize,
+    writer: &mut W,
+) -> Result<()> {
+    loop {
+        let mut byte: u8 = (value as u8) & 0b01111111;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0b10000000;
+        }
+        writer.write_all(&[byte])?;
+        if value == 0 {
+            break;
+        }
+    }
+    Ok(())
+}
+
+pub fn read_varint_u32<
     R: std::io::Read,
-    N: FromPrimitive + Copy + Unsigned + ShrAssign<u8> + BitAnd + Shl<i32, Output = N> + BitOrAssign,
 >(
     reader: &mut R,
-) -> Result<N> {
-    let mut value = N::zero();
+) -> Result<u32> {
+    let mut value = 0u32;
     let mut shift = 0;
     loop {
         let mut byte = [0u8];
         reader.read_exact(&mut byte)?;
         let byte = byte[0];
-        value |= N::from_u8(byte & 0b01111111).unwrap() << shift;
+        value |= ((byte & 0b01111111) as u32) << shift;
+        shift += 7;
+        if byte & 0b10000000 == 0 {
+            break;
+        }
+    }
+    Ok(value)
+}
+
+pub fn read_varint_u64<
+    R: std::io::Read,
+>(
+    reader: &mut R,
+) -> Result<u64> {
+    let mut value = 0u64;
+    let mut shift = 0;
+    loop {
+        let mut byte = [0u8];
+        reader.read_exact(&mut byte)?;
+        let byte = byte[0];
+        value |= ((byte & 0b01111111) as u64) << shift;
+        shift += 7;
+        if byte & 0b10000000 == 0 {
+            break;
+        }
+    }
+    Ok(value)
+}
+
+pub fn read_varint_usize<
+    R: std::io::Read,
+>(
+    reader: &mut R,
+) -> Result<usize> {
+    let mut value = 0usize;
+    let mut shift = 0;
+    loop {
+        let mut byte = [0u8];
+        reader.read_exact(&mut byte)?;
+        let byte = byte[0];
+        value |= ((byte & 0b01111111) as usize) << shift;
         shift += 7;
         if byte & 0b10000000 == 0 {
             break;
@@ -66,15 +168,12 @@ mod tests {
     #[test]
     fn varint_write_test() {
         let mut buffer = Cursor::new(Vec::new());
-        varint_write(150u32, &mut buffer).unwrap();
-        varint_write(150u64, &mut buffer).unwrap();
-        varint_write(150u128, &mut buffer).unwrap();
-        varint_write(150usize, &mut buffer).unwrap();
-        varint_write(150u8, &mut buffer).unwrap();
-        varint_write(150u16, &mut buffer).unwrap();
+        write_varint_u32(150u32, &mut buffer).unwrap();
+        write_varint_u64(150u64, &mut buffer).unwrap();
+        write_varint_usize(150usize, &mut buffer).unwrap();
         assert_eq!(
             buffer.into_inner(),
-            vec![150, 01, 150, 01, 150, 01, 150, 01, 150, 01, 150, 01]
+            vec![150, 01, 150, 01, 150, 01]
         );
     }
 
@@ -82,17 +181,14 @@ mod tests {
     fn varint_read_test() {
         let buffer = vec![150, 1];
         let mut reader = Cursor::new(buffer);
-        let res: u64 = varint_read(&mut reader).unwrap();
+        let res: u64 = read_varint_u64(&mut reader).unwrap();
         assert_eq!(res, 150);
     }
 
     #[test]
     fn varint_length_test() {
-        assert_eq!(varint_length(150u32), 2);
-        assert_eq!(varint_length(150u64), 2);
-        assert_eq!(varint_length(150u128), 2);
-        assert_eq!(varint_length(150usize), 2);
-        assert_eq!(varint_length(150u8), 2);
-        assert_eq!(varint_length(150u16), 2);
+        assert_eq!(len_varint_u32(150u32), 2);
+        assert_eq!(len_varint_u64(150u64), 2);
+        assert_eq!(len_varint_usize(150usize), 2);
     }
 }

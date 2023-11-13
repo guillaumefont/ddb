@@ -1,7 +1,7 @@
 # This is an action to run cargo test on a Rust project.
 name: Test
 
-on: [push]
+on: [push, pull_request]
 
 env:
   CARGO_TERM_COLOR: always

@@ -3,8 +3,7 @@ use std::{io::Result, mem::size_of};
 use crate::{
     db::options::DbOptions,
     utils::{
-        fixedint::fixedint_write,
-        varint::{varint_length, varint_write},
+        fixedint::write_fixed_u32, varint::{len_varint_u32, len_varint_usize, write_varint_usize},
     },
 };
 
@@ -40,14 +39,15 @@ impl SstBlockWriter {
         }
 
         estimate += size_of::<u32>();
-        estimate += varint_length(key.len());
-        estimate += varint_length(value.len());
+        estimate += len_varint_usize(key.len());
+        estimate += len_varint_usize(value.len());
 
         estimate
     }
 
     pub fn append(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
         debug_assert!(self.counter <= self.db_options.block_restart_interval);
+        debug_assert!(key > &self.last_key);
 
         let shared = if self.counter >= self.db_options.block_restart_interval {
             self.restarts.push(self.buffer.len() as u32);
@@ -62,9 +62,9 @@ impl SstBlockWriter {
         let non_shared = key.len() - shared;
         let curr_size = self.buffer.len();
 
-        varint_write(shared, &mut self.buffer)?;
-        varint_write(non_shared, &mut self.buffer)?;
-        varint_write(key.len(), &mut self.buffer)?;
+        write_varint_usize(shared, &mut self.buffer)?;
+        write_varint_usize(non_shared, &mut self.buffer)?;
+        write_varint_usize(key.len(), &mut self.buffer)?;
 
         self.buffer.extend_from_slice(&key[shared..]);
         self.buffer.extend_from_slice(&value);
@@ -78,9 +78,9 @@ impl SstBlockWriter {
 
     pub fn finalize(mut self) -> Result<Vec<u8>> {
         for restart in &self.restarts {
-            fixedint_write(*restart, &mut self.buffer)?;
+            write_fixed_u32(*restart, &mut self.buffer)?;
         }
-        fixedint_write((&self.restarts).len(), &mut self.buffer)?;
+        write_fixed_u32((&self.restarts).len() as u32, &mut self.buffer)?;
 
         Ok(self.buffer)
     }
@@ -100,6 +100,8 @@ fn slice_shared_offset(left: &[u8], right: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
 
+    use crate::sst::block::reader;
+
     use super::*;
 
     #[test]
@@ -108,5 +110,33 @@ mod tests {
         assert_eq!(slice_shared_offset(b"hello", b"hell"), 4);
         assert_eq!(slice_shared_offset(b"hello", b"hello"), 5);
         assert_eq!(slice_shared_offset(b"hello", b"hello world"), 5);
+    }
+
+    #[test]
+    fn read_write() {
+        let mut writer = SstBlockWriter::new(DbOptions::default());
+        writer.append(b"hello0", b"world0").unwrap();
+        writer.append(b"hello1", b"world1").unwrap();
+        writer.append(b"hello2", b"world2").unwrap();
+
+        let block = writer.finalize().unwrap();
+
+        let reader = reader::SstBlockReader::new(block).unwrap();
+        let mut iter = reader.iter();
+
+        let (key0, value0) = iter.next().unwrap();
+        assert_eq!(key0, b"hello0");
+        assert_eq!(value0, b"world0");
+
+        let (key1, value1) = iter.next().unwrap();
+        assert_eq!(key1, b"hello1");
+        assert_eq!(value1, b"world1");
+
+        let (key2, value2) = iter.next().unwrap();
+        assert_eq!(key2, b"hello2");
+        assert_eq!(value2, b"world2");
+
+        assert_eq!(iter.next(), None);
+        
     }
 }
