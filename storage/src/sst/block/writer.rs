@@ -30,6 +30,10 @@ impl SstBlockWriter {
         }
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
+    }
+
     pub fn estimate_after_append(&self, key: &[u8], value: &[u8]) -> usize {
         let mut estimate = self.estimate;
         estimate += key.len() + value.len();
