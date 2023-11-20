@@ -7,12 +7,17 @@ impl BitVec {
     pub fn new(len: usize) -> Self {
         let data_len = match len % 8 {
             0 => len / 8,
-            _ => len / 8 + 1
+            _ => len / 8 + 1,
         };
         let data = vec![0u8; data_len];
+        Self { data, len }
+    }
+
+    pub fn from_data(data: &[u8]) -> Self {
+        let len = data.len() * 8;
         Self {
-            data,
-            len
+            data: data.to_vec(),
+            len,
         }
     }
 
@@ -20,7 +25,7 @@ impl BitVec {
         let byte_index = index / 8;
         let bit_index = index % 8;
         let byte = self.data[byte_index];
-        let new_byte =  byte | (1 << bit_index);
+        let new_byte = byte | (1 << bit_index);
         self.data[byte_index] = new_byte;
     }
 

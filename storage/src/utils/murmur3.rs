@@ -1,5 +1,3 @@
-
-
 pub struct Murmur3Hasher {
     hash: u32,
     buffer: [u8; 4],
@@ -10,13 +8,17 @@ pub struct Murmur3Hasher {
 impl Murmur3Hasher {
     pub fn new(seed: u32) -> Self {
         let buffer = [0, 0, 0, 0];
-        let buffer_len =  0;
+        let buffer_len = 0;
         let data_len = 0;
-        Self { hash: seed, buffer, buffer_len, data_len }
+        Self {
+            hash: seed,
+            buffer,
+            buffer_len,
+            data_len,
+        }
     }
 
     pub fn update(&mut self, data: &[u8]) {
-
         let data_len = data.len();
         self.data_len += data_len;
         let mut data_i = 0;
@@ -25,7 +27,6 @@ impl Murmur3Hasher {
             self.buffer[self.buffer_len..self.buffer_len + data_len].copy_from_slice(data);
             return;
         }
-
 
         if self.buffer_len > 0 {
             self.buffer[self.buffer_len..4].copy_from_slice(&data[0..4 - self.buffer_len]);
@@ -42,7 +43,6 @@ impl Murmur3Hasher {
         self.buffer_len = data_len - data_i;
         self.buffer = [0, 0, 0, 0];
         self.buffer[0..self.buffer_len].copy_from_slice(&data[data_i..]);
-
     }
 
     fn _update(&mut self) {
@@ -53,7 +53,6 @@ impl Murmur3Hasher {
         self.hash = self.hash.rotate_left(13);
         self.hash = self.hash.wrapping_mul(5);
         self.hash = self.hash.wrapping_add(0xe6546b64);
-
     }
 
     fn _rotate(&mut self, v: u32) {
@@ -83,7 +82,7 @@ impl Murmur3Hasher {
 }
 
 #[cfg(test)]
-mod tests{
+mod tests {
     use super::*;
 
     #[test]

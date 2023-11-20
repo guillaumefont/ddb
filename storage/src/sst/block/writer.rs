@@ -3,29 +3,32 @@ use std::{io::Result, mem::size_of};
 use crate::{
     db::options::DbOptions,
     utils::{
-        fixedint::write_fixed_u32, varint::{len_varint_u32, len_varint_usize, write_varint_usize},
+        fixedint::write_u32,
+        varint::{len::len_varint, write::write_varint},
     },
 };
 
 pub struct SstBlockWriter {
-    db_options: DbOptions,
+    restart_every: usize,
     buffer: Vec<u8>,
     restarts: Vec<u32>,
     estimate: usize,
     counter: usize,
+    first_key: Option<Vec<u8>>,
     last_key: Vec<u8>,
 }
 
 impl SstBlockWriter {
-    pub fn new(db_options: DbOptions) -> Self {
+    pub fn new(restart_every: usize) -> Self {
         let restarts = vec![0];
         let estimate = size_of::<u32>() + size_of::<u32>();
         Self {
-            db_options,
+            restart_every,
             buffer: Vec::new(),
             restarts,
             estimate,
             counter: 0,
+            first_key: None,
             last_key: Vec::new(),
         }
     }
@@ -38,22 +41,26 @@ impl SstBlockWriter {
         let mut estimate = self.estimate;
         estimate += key.len() + value.len();
 
-        if self.counter >= self.db_options.block_restart_interval {
+        if self.counter >= self.restart_every {
             estimate += size_of::<u32>();
         }
 
         estimate += size_of::<u32>();
-        estimate += len_varint_usize(key.len());
-        estimate += len_varint_usize(value.len());
+        estimate += len_varint(key.len());
+        estimate += len_varint(value.len());
 
         estimate
     }
 
     pub fn append(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
-        debug_assert!(self.counter <= self.db_options.block_restart_interval);
-        debug_assert!(key > &self.last_key);
+        debug_assert!(self.counter <= self.restart_every);
+        debug_assert!(key > self.last_key.as_slice());
 
-        let shared = if self.counter >= self.db_options.block_restart_interval {
+        if self.first_key.is_none() {
+            self.first_key = Some(key.to_vec());
+        }
+
+        let shared = if self.counter >= self.restart_every {
             self.restarts.push(self.buffer.len() as u32);
             self.estimate += size_of::<u32>();
             self.counter = 0;
@@ -66,9 +73,9 @@ impl SstBlockWriter {
         let non_shared = key.len() - shared;
         let curr_size = self.buffer.len();
 
-        write_varint_usize(shared, &mut self.buffer)?;
-        write_varint_usize(non_shared, &mut self.buffer)?;
-        write_varint_usize(key.len(), &mut self.buffer)?;
+        write_varint(shared, &mut self.buffer)?;
+        write_varint(non_shared, &mut self.buffer)?;
+        write_varint(key.len(), &mut self.buffer)?;
 
         self.buffer.extend_from_slice(&key[shared..]);
         self.buffer.extend_from_slice(&value);
@@ -80,13 +87,16 @@ impl SstBlockWriter {
         Ok(())
     }
 
-    pub fn finalize(mut self) -> Result<Vec<u8>> {
-        for restart in &self.restarts {
-            write_fixed_u32(*restart, &mut self.buffer)?;
-        }
-        write_fixed_u32((&self.restarts).len() as u32, &mut self.buffer)?;
+    pub fn finalize(mut self) -> Result<(Vec<u8>, Vec<u8>)> {
+        debug_assert!(self.first_key.is_some());
+        debug_assert!(self.buffer.len() > 0);
 
-        Ok(self.buffer)
+        for restart in &self.restarts {
+            write_u32(*restart, &mut self.buffer)?;
+        }
+        write_u32((&self.restarts).len() as u32, &mut self.buffer)?;
+
+        Ok((self.first_key.unwrap(), self.buffer))
     }
 }
 
@@ -118,12 +128,12 @@ mod tests {
 
     #[test]
     fn read_write() {
-        let mut writer = SstBlockWriter::new(DbOptions::default());
+        let mut writer = SstBlockWriter::new(16);
         writer.append(b"hello0", b"world0").unwrap();
         writer.append(b"hello1", b"world1").unwrap();
         writer.append(b"hello2", b"world2").unwrap();
 
-        let block = writer.finalize().unwrap();
+        let (first_key, block) = writer.finalize().unwrap();
 
         let reader = reader::SstBlockReader::new(block).unwrap();
         let mut iter = reader.iter();
@@ -141,6 +151,5 @@ mod tests {
         assert_eq!(value2, b"world2");
 
         assert_eq!(iter.next(), None);
-        
     }
 }

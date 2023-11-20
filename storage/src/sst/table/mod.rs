@@ -1,3 +1,4 @@
 pub mod reader;
-pub mod writer;
+pub mod stats;
 pub mod table;
+pub mod writer;
