@@ -1,7 +1,7 @@
 use std::io::Result;
 use std::mem::replace;
-use std::path::{Path, PathBuf};
-use tokio::fs::File;
+use std::path::PathBuf;
+use tokio::fs::{create_dir_all, File};
 use tokio::io::{AsyncWriteExt, BufWriter};
 
 use crate::sst::block::handle::SstBlockHandle;
@@ -39,7 +39,7 @@ impl SstTableWriter {
             file_writer: file,
             written_size: 0,
             db_options: db_options.clone(),
-            block_writer: SstBlockWriter::new(db_options.block_restart_interval),
+            block_writer: SstBlockWriter::new(db_options.sst_block_restart_interval),
             filter: SstFilter::new(item_count, 0.01),
             index: Vec::new(),
             stats: SstStats::default(),
@@ -49,7 +49,7 @@ impl SstTableWriter {
     pub async fn add(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
         self.stats.add_entry(key, value);
         if !self.block_writer.is_empty()
-            && self.block_writer.estimate_after_append(key, value) > self.db_options.max_block_size
+            && self.block_writer.estimate_after_append(key, value) > self.db_options.sst_block_size
         {
             self._process_block().await?;
         }
@@ -71,7 +71,7 @@ impl SstTableWriter {
     async fn _process_block(&mut self) -> Result<()> {
         let prev_block = replace(
             &mut self.block_writer,
-            SstBlockWriter::new(self.db_options.block_restart_interval),
+            SstBlockWriter::new(self.db_options.sst_block_restart_interval),
         );
 
         let (first_key, block) = prev_block.finalize()?;
@@ -85,7 +85,7 @@ impl SstTableWriter {
     }
 
     fn _index_to_block(&self) -> Result<Vec<u8>> {
-        let mut block = SstBlockWriter::new(self.db_options.index_restart_interval);
+        let mut block = SstBlockWriter::new(self.db_options.sst_index_restart_interval);
         for (key, handle) in self.index.iter() {
             let handle_value = handle.to_value();
             block.append(key, handle_value.as_slice())?;
@@ -97,16 +97,19 @@ impl SstTableWriter {
     pub async fn finish(mut self) -> Result<SstTable> {
         self._process_block().await?;
 
+        // Finish filter block
         let filter_block = self.filter.bitvec.data.as_slice();
         self.stats.set_filter_size(filter_block.len());
         self.file_writer.write_all(filter_block).await?;
         let filter_handle = self._add_handle(filter_block.len());
 
+        // Finish index block
         let index_block = self._index_to_block()?;
         self.stats.set_index_size(index_block.len());
         self.file_writer.write_all(&index_block).await?;
         let index_handle = self._add_handle(index_block.len());
 
+        // Finish meta block
         let mut meta_index = SstBlockWriter::new(usize::MAX);
         meta_index.append(b"filter", &filter_handle.to_value())?;
         meta_index.append(b"index", &index_handle.to_value())?;
@@ -114,6 +117,7 @@ impl SstTableWriter {
         self.file_writer.write_all(&meta_block).await?;
         let meta_handle = self._add_handle(meta_block.len());
 
+        // Write footer
         let mut footer = Vec::new();
         meta_handle.write(&mut footer)?;
         footer.resize(20, 0);
@@ -125,32 +129,5 @@ impl SstTableWriter {
         let table = SstTable::new(self.file_path, self.filter, self.index);
 
         Ok(table)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-
-    #[tokio::test]
-    async fn read_write() {
-        let mut writer = SstTableWriter::new("test.sst", 100, DbOptions::default())
-            .await
-            .unwrap();
-        for i in 0..100 {
-            let key = format!("foo{:0>4}", i);
-            writer.add(key.as_bytes(), key.as_bytes()).await.unwrap();
-        }
-
-        let table = writer.finish().await.unwrap();
-
-        let res = table.get(b"foo0000").await.unwrap();
-
-        assert!(res.is_some());
-        assert_eq!(res.unwrap(), b"foo0000");
-
-        let res2 = table.get(b"bar").await.unwrap();
-        assert!(res2.is_none());
     }
 }

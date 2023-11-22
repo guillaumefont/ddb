@@ -17,9 +17,8 @@ impl SstFilter {
         }
     }
 
-    pub fn from_data(data: &[u8]) -> SstFilter {
+    pub fn from_data(data: &[u8], num_functions: u32) -> SstFilter {
         let bitvec = BitVec::from_data(data);
-        let num_functions = bitvec.len / data.len();
         Self {
             bitvec,
             num_functions,
@@ -57,7 +56,7 @@ mod tests {
     #[test]
     fn filter_size() {
         let filter = SstFilter::new(4000, 0.01);
-        assert_eq!(filter.bitvec.len, 38341);
+        assert_eq!(filter.bitvec.len, 38344); // 38341 rounded to next byte
         assert_eq!(filter.num_functions, 7);
     }
 

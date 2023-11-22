@@ -4,12 +4,13 @@ pub struct BitVec {
 }
 
 impl BitVec {
-    pub fn new(len: usize) -> Self {
-        let data_len = match len % 8 {
-            0 => len / 8,
-            _ => len / 8 + 1,
+    pub fn new(min_len: usize) -> Self {
+        let data_len = match min_len % 8 {
+            0 => min_len / 8,
+            _ => min_len / 8 + 1,
         };
         let data = vec![0u8; data_len];
+        let len = data_len * 8;
         Self { data, len }
     }
 

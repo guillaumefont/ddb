@@ -29,7 +29,7 @@ impl SstBlockReader {
 
     pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
         self.iter()
-            .find(|(k, _)| k.as_slice() == key)
+            .find(|(k, _)| *k == key)
             .map(|(_, v)| v.to_vec())
     }
 
@@ -41,7 +41,7 @@ impl SstBlockReader {
 pub struct SstBlockIterator<'a> {
     slice: &'a [u8],
     cursor: Cursor<&'a [u8]>,
-    prev_key: Vec<u8>,
+    key: Vec<u8>,
     block_len: usize,
 }
 
@@ -50,11 +50,11 @@ impl<'a> SstBlockIterator<'a> {
         let block_len = reader.block.len() - size_of::<u32>() * reader.restarts.len();
         let slice = &reader.block[0..block_len];
         let cursor = Cursor::new(slice);
-        let prev_key = Vec::new();
+        let key = Vec::new();
         Self {
             slice,
             cursor,
-            prev_key,
+            key,
             block_len,
         }
     }
@@ -68,26 +68,22 @@ impl<'a> Iterator for SstBlockIterator<'a> {
             return None;
         }
 
-        let shared = read_varint(&mut self.cursor).unwrap();
+        let shared: usize = read_varint(&mut self.cursor).unwrap();
         let non_shared: usize = read_varint(&mut self.cursor).unwrap();
         let value_len: usize = read_varint(&mut self.cursor).unwrap();
 
-        println!(
-            "shared: {}, non_shared: {}, value_len: {}",
-            shared, non_shared, value_len
-        );
-
-        let mut key = self.prev_key.to_vec();
-        key.resize(shared + non_shared, 0);
+        // let mut key = self.key.to_vec();
+        self.key.resize(shared + non_shared, 0);
         self.cursor
-            .read_exact(&mut key[shared..shared + non_shared])
+            .read_exact(&mut self.key[shared..shared + non_shared])
             .unwrap();
 
         let value_pos = self.cursor.position() as usize;
+        self.cursor
+            .seek(SeekFrom::Current(value_len as i64))
+            .unwrap();
         let value = &self.slice[value_pos..value_pos + value_len];
 
-        self.prev_key = key.clone();
-
-        Some((key, value))
+        Some((self.key.clone(), value))
     }
 }

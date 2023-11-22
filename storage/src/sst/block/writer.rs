@@ -133,7 +133,7 @@ mod tests {
         writer.append(b"hello1", b"world1").unwrap();
         writer.append(b"hello2", b"world2").unwrap();
 
-        let (first_key, block) = writer.finalize().unwrap();
+        let (_, block) = writer.finalize().unwrap();
 
         let reader = reader::SstBlockReader::new(block).unwrap();
         let mut iter = reader.iter();

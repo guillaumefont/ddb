@@ -1,8 +1,10 @@
 use std::io::Read;
 use std::io::Result;
+use std::io::SeekFrom;
 use std::io::Write;
 
 use tokio::io::AsyncReadExt;
+use tokio::io::AsyncSeekExt;
 
 use crate::utils::varint::read::async_read_varint;
 use crate::utils::varint::read::read_varint;
@@ -42,4 +44,14 @@ impl SstBlockHandle {
         write_varint(self.size, writer)?;
         Ok(())
     }
+}
+
+pub async fn block_from_handle(
+    reader: &mut (impl AsyncReadExt + AsyncSeekExt + Unpin),
+    handle: &SstBlockHandle,
+) -> Result<Vec<u8>> {
+    let mut block = vec![0; handle.size as usize];
+    reader.seek(SeekFrom::Start(handle.offset)).await?;
+    reader.read_exact(&mut block).await?;
+    Ok(block)
 }
