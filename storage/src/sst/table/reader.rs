@@ -45,10 +45,8 @@ pub async fn sst_table_writer_new(path: impl AsRef<Path>) -> Result<SstTable> {
     let index: Vec<(Vec<u8>, SstBlockHandle)> = SstBlockReader::new(index_block)?
         .iter()
         .map(|(k, v)| {
-            (
-                k.to_vec(),
-                SstBlockHandle::read_from(&mut Cursor::new(v)).unwrap(),
-            )
+            let handle = SstBlockHandle::read_from(&mut Cursor::new(v)).unwrap();
+            (k.to_vec(), handle)
         })
         .collect();
 

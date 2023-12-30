@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub struct BitVec {
     pub data: Vec<u8>,
     pub len: usize,

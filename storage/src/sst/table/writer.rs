@@ -1,11 +1,11 @@
-use std::io::Result;
-use std::mem::replace;
+use std::io::{Cursor, Result, Seek};
+use std::mem::{replace, size_of};
 use std::path::PathBuf;
 use tokio::fs::{create_dir_all, File};
 use tokio::io::{AsyncWriteExt, BufWriter};
 
 use crate::sst::block::handle::SstBlockHandle;
-use crate::utils::fixedint::write_u64;
+use crate::utils::fixedint::{read_u32, write_u64};
 use crate::{
     db::options::DbOptions,
     sst::{block::writer::SstBlockWriter, filter::SstFilter},
@@ -69,17 +69,16 @@ impl SstTableWriter {
     }
 
     async fn _process_block(&mut self) -> Result<()> {
-        let prev_block = replace(
-            &mut self.block_writer,
-            SstBlockWriter::new(self.db_options.sst_block_restart_interval),
-        );
+        let new_block = SstBlockWriter::new(self.db_options.sst_block_restart_interval);
+
+        let prev_block = replace(&mut self.block_writer, new_block);
 
         let (first_key, block) = prev_block.finalize()?;
+
         let block_handle = self._add_handle(block.len());
         self.index.push((first_key, block_handle));
 
         self.file_writer.write_all(&block).await?;
-        self.written_size += block.len();
 
         Ok(())
     }

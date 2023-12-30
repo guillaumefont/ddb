@@ -10,6 +10,7 @@ use crate::utils::varint::read::async_read_varint;
 use crate::utils::varint::read::read_varint;
 use crate::utils::varint::write::write_varint;
 
+#[derive(Debug)]
 pub struct SstBlockHandle {
     pub offset: u64,
     pub size: u64,

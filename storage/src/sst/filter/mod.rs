@@ -1,5 +1,6 @@
 use crate::utils::{bitvec::BitVec, murmur3::Murmur3Hasher};
 
+#[derive(Debug)]
 pub struct SstFilter {
     pub bitvec: BitVec,
     num_functions: u32,
@@ -63,13 +64,10 @@ mod tests {
     #[test]
     fn test_filter() {
         let mut filter = SstFilter::new(100, 0.01);
-        println!("filter size: {}", filter.bitvec.len);
-        println!("num functions: {}", filter.num_functions);
         for i in 0..100 {
             let key = format!("foo{}", i);
             filter.add(key.as_bytes());
         }
-        println!("filter: {:?}", filter.bitvec.data);
 
         for i in 0..100 {
             let key = format!("foo{}", i);

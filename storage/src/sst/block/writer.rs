@@ -82,7 +82,7 @@ impl SstBlockWriter {
 
         self.counter += 1;
 
-        self.estimate = self.buffer.len() - curr_size;
+        self.estimate += self.buffer.len() - curr_size;
 
         Ok(())
     }
@@ -94,6 +94,7 @@ impl SstBlockWriter {
         for restart in &self.restarts {
             write_u32(*restart, &mut self.buffer)?;
         }
+
         write_u32((&self.restarts).len() as u32, &mut self.buffer)?;
 
         Ok((self.first_key.unwrap(), self.buffer))
@@ -124,6 +125,21 @@ mod tests {
         assert_eq!(slice_shared_offset(b"hello", b"hell"), 4);
         assert_eq!(slice_shared_offset(b"hello", b"hello"), 5);
         assert_eq!(slice_shared_offset(b"hello", b"hello world"), 5);
+    }
+
+    #[test]
+    fn read_none() {
+        let mut writer = SstBlockWriter::new(16);
+        writer.append(b"hello0", b"world0").unwrap();
+        writer.append(b"hello1", b"world1").unwrap();
+        writer.append(b"hello2", b"world2").unwrap();
+
+        let (_, block) = writer.finalize().unwrap();
+
+        let reader = reader::SstBlockReader::new(block).unwrap();
+
+        assert_eq!(reader.get(b"test"), None);
+        assert_eq!(reader.get(b"abc"), None);
     }
 
     #[test]
