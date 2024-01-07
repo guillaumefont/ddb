@@ -87,11 +87,10 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use tempfile::tempdir;
-    use tempfile::tempdir_in;
 
     #[tokio::test]
     async fn test_manifest_create() {
-        let dir = tempdir_in("tmp").unwrap();
+        let dir = tempdir().unwrap();
         let path = PathBuf::from(dir.path());
         let (sender, receiver) = tokio::sync::mpsc::channel(1024);
         let mut manifest = Manifest::create(path.clone(), receiver).await.unwrap();
