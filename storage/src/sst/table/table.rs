@@ -1,12 +1,10 @@
 use std::io::{Result, SeekFrom};
 use std::path::PathBuf;
 
-use opentelemetry::global;
-use opentelemetry::trace::{TraceContextExt as _, Tracer as _};
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio_stream::Stream;
-use tracing::{debug, info, instrument};
+use tracing::{debug, event, info, instrument, Level};
 
 use crate::sst::block::handle::{block_from_handle, SstBlockHandle};
 use crate::sst::block::reader::SstBlockReader;
@@ -22,8 +20,8 @@ pub struct SstTable {
 }
 
 impl SstTable {
-    pub fn new(
-        path: impl Into<PathBuf>,
+    pub fn new<P: Into<PathBuf>>(
+        path: P,
         filter: SstFilter,
         index: Vec<(Vec<u8>, SstBlockHandle)>,
     ) -> Self {
@@ -36,30 +34,31 @@ impl SstTable {
 
     #[instrument]
     pub async fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        global::tracer("ddb")
-            .in_span("table_get", |ctx| async move {
-                let span = ctx.span();
-                span.set_attribute(opentelemetry::KeyValue::new(
-                    "key",
-                    String::from_utf8(key.to_vec()).unwrap(),
-                ));
-                if !self.filter.may_contain(key) {
-                    return Ok(None);
-                }
-                match self.index.partition_point(|(k, _)| k.as_slice() <= key) {
-                    0 => Ok(None),
-                    i => {
-                        let (_, handle) = &self.index[i - 1];
-                        let mut block = vec![0; handle.size as usize];
-                        let mut file = File::open(&self.path).await?;
-                        file.seek(SeekFrom::Start(handle.offset)).await?;
-                        file.read_exact(&mut block).await?;
-                        let reader = SstBlockReader::new(block)?;
-                        Ok(reader.get(key))
-                    }
-                }
-            })
-            .await
+        debug!(key = String::from_utf8(key.to_vec()).unwrap());
+        if !self.filter.may_contain(key) {
+            return Ok(None);
+        }
+        for (k, _) in &self.index {
+            event!(
+                Level::DEBUG,
+                "index: {}",
+                String::from_utf8(k.to_vec()).unwrap()
+            );
+        }
+        let partition_point = self.index.partition_point(|(k, _)| k.as_slice() <= key);
+        event!(Level::DEBUG, "partition_point: {}", partition_point);
+        match partition_point {
+            0 => Ok(None),
+            i => {
+                let (_, handle) = &self.index[i - 1];
+                let mut block = vec![0; handle.size as usize];
+                let mut file = File::open(&self.path).await?;
+                file.seek(SeekFrom::Start(handle.offset)).await?;
+                file.read_exact(&mut block).await?;
+                let reader = SstBlockReader::new(block)?;
+                Ok(reader.get(key))
+            }
+        }
     }
 
     #[instrument]
@@ -71,7 +70,7 @@ impl SstTable {
         let partitioned = self.index.partition_point(|(k, _)| k.as_slice() < from) - 1;
         debug!("partitioned: {}", partitioned);
         try_stream! {
-            for (k, handle) in &self.index[partitioned..] {
+            for (_, handle) in &self.index[partitioned..] {
                 let block = block_from_handle(&mut file, handle).await?;
                 let reader = SstBlockReader::new(block)?;
                 for (key, value) in reader.iter_from(from) {
@@ -112,8 +111,8 @@ mod tests {
     use tracing::Instrument;
 
     #[instrument]
-    async fn filled_table(
-        file_path: impl Into<PathBuf> + std::fmt::Debug,
+    async fn filled_table<P: Into<PathBuf> + std::fmt::Debug>(
+        file_path: P,
         count: usize,
         options: DbOptions,
     ) -> Result<SstTable> {
@@ -140,18 +139,19 @@ mod tests {
                 .await
                 .unwrap();
 
-            let res = table.get(b"foo567").await.unwrap();
+            let res = table.get(b"foo382").await.unwrap();
 
             assert!(res.is_some());
-            assert_eq!(res.unwrap(), b"foo567");
+            assert_eq!(res.unwrap(), b"foo382");
 
-            let res2 = table.get(b"foo560").await.unwrap();
+            let res2 = table.get(b"foo383").await.unwrap();
 
             assert!(res2.is_some());
-            assert_eq!(res2.unwrap(), b"foo560");
+            assert_eq!(res2.unwrap(), b"foo383");
 
-            let res3 = table.get(b"foo1000000").await.unwrap();
-            assert!(res3.is_none());
+            let res3 = table.get(b"foo384").await.unwrap();
+            assert!(res3.is_some());
+            assert_eq!(res3.unwrap(), b"foo384");
 
             let res4 = table.get(b"abc").await.unwrap();
             assert!(res4.is_none());

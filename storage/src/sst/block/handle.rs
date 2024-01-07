@@ -21,13 +21,13 @@ impl SstBlockHandle {
         Self { offset, size }
     }
 
-    pub fn read_from(reader: &mut impl Read) -> Result<Self> {
+    pub fn read_from<R: Read>(reader: &mut R) -> Result<Self> {
         let offset = read_varint(reader)?;
         let size = read_varint(reader)?;
         Ok(Self { offset, size })
     }
 
-    pub async fn async_read_from(reader: &mut (impl AsyncReadExt + Unpin)) -> Result<Self> {
+    pub async fn async_read_from<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Self> {
         let offset = async_read_varint(reader).await?;
         let size = async_read_varint(reader).await?;
         Ok(Self { offset, size })
@@ -47,8 +47,8 @@ impl SstBlockHandle {
     }
 }
 
-pub async fn block_from_handle(
-    reader: &mut (impl AsyncReadExt + AsyncSeekExt + Unpin),
+pub async fn block_from_handle<R: AsyncReadExt + AsyncSeekExt + Unpin>(
+    reader: &mut R,
     handle: &SstBlockHandle,
 ) -> Result<Vec<u8>> {
     let mut block = vec![0; handle.size as usize];

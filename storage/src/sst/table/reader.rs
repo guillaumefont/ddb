@@ -19,7 +19,7 @@ use std::{
     path::Path,
 };
 
-pub async fn sst_table_writer_new(path: impl AsRef<Path>) -> Result<SstTable> {
+pub async fn sst_table_writer_new<P: AsRef<Path>>(path: P) -> Result<SstTable> {
     let file = File::open(path.as_ref()).await?;
     let mut file_reader = BufReader::new(file);
 
