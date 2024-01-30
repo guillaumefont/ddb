@@ -1,16 +1,31 @@
 use tokio::fs::{create_dir_all, read_to_string, write};
-use tokio::sync::mpsc::Sender;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tracing::info;
 use uuid::Uuid;
 
 use crate::db::options::DbOptions;
 use crate::manifest::entry::ManifestLogEntry;
 use crate::manifest::manifest::{Manifest, ManifestRequest};
-use crate::wal::manager::WalManager;
+use crate::wal::entry::WalEntry;
+use crate::wal::manager::{WalManager, WalRequest};
 use std::fmt::Debug;
 use std::io::Result;
 use std::path::PathBuf;
 use tracing::instrument;
+
+pub enum DbCmd {
+    Set { key: Vec<u8>, value: Vec<u8> },
+    Delete { key: Vec<u8> },
+}
+
+impl Into<WalEntry> for DbCmd {
+    fn into(self) -> WalEntry {
+        match self {
+            DbCmd::Set { key, value } => WalEntry::Set { key, value },
+            DbCmd::Delete { key } => WalEntry::Delete { key },
+        }
+    }
+}
 
 pub struct Db {
     id: Uuid,
@@ -18,11 +33,17 @@ pub struct Db {
     options: DbOptions,
     manifest: Manifest,
     wal: WalManager,
+    seq_num: u64,
+    wal_sender: Sender<WalRequest>,
+    db_receiver: Receiver<DbCmd>,
 }
 
 impl Db {
     #[instrument]
-    pub async fn open<P: Into<PathBuf> + Debug>(path: P, options: DbOptions) -> Result<Self> {
+    pub async fn open<P: Into<PathBuf> + Debug>(
+        path: P,
+        options: DbOptions,
+    ) -> Result<(Self, Sender<DbCmd>)> {
         let path = path.into();
         create_dir_all(&path).await?;
         // let manifest = Manifest::open(path.clone()).await?;
@@ -32,7 +53,10 @@ impl Db {
 
         let (manifest, manifest_sender) = Self::open_manifest(&path, created, id).await?;
 
-        let wal = Self::open_wal(&path, created, manifest_sender).await?;
+        let (wal, wal_sender) =
+            Self::open_wal(&path, options.clone(), created, manifest_sender).await?;
+
+        let (db_sender, db_receiver) = channel(1024);
 
         let db = Self {
             id,
@@ -40,8 +64,11 @@ impl Db {
             options,
             manifest,
             wal,
+            seq_num: 0,
+            wal_sender,
+            db_receiver,
         };
-        Ok(db)
+        Ok((db, db_sender))
     }
 
     #[instrument]
@@ -62,15 +89,33 @@ impl Db {
         }
     }
 
-    pub async fn get(&self, key: &[u8]) -> Result<()> {
-        Ok(())
-    }
-
-    pub async fn set(&self, key: &[u8], value: &[u8]) -> Result<Option<Vec<u8>>> {
+    pub async fn get(&self, _key: &[u8]) -> Result<Option<Vec<u8>>> {
         Ok(None)
     }
 
-    pub async fn delete(&self, key: &[u8]) -> Result<()> {
+    pub async fn set<'a>(&mut self, key: &'a [u8], value: &'a [u8]) -> Result<()> {
+        self.batch(vec![DbCmd::Set {
+            key: key.into(),
+            value: value.into(),
+        }])
+        .await
+    }
+
+    pub async fn delete<'a>(&mut self, key: &'a [u8]) -> Result<()> {
+        self.batch(vec![DbCmd::Delete { key: key.into() }]).await
+    }
+
+    fn incr_seq_num(&mut self) -> u64 {
+        let seq_num = self.seq_num;
+        self.seq_num += 1;
+        seq_num
+    }
+
+    pub async fn batch<'a>(&mut self, batch: Vec<DbCmd>) -> Result<()> {
+        let seq_num = self.incr_seq_num();
+        let batch = batch.into_iter().map(|cmd| cmd.into()).collect();
+        let req = WalRequest::new(seq_num, batch);
+        self.wal_sender.send(req).await.unwrap();
         Ok(())
     }
 
@@ -98,20 +143,26 @@ impl Db {
         Ok((manifest, sender))
     }
 
+    pub async fn run(&mut self) {
+        let _ = self.wal.run().await;
+    }
+
     #[instrument]
     async fn open_wal(
         path: &PathBuf,
+        options: DbOptions,
         new: bool,
         manifest_sender: Sender<ManifestRequest>,
-    ) -> Result<WalManager> {
+    ) -> Result<(WalManager, Sender<WalRequest>)> {
+        let (wal_sender, wal_receiver) = tokio::sync::mpsc::channel(1024);
         let wal = if new {
             info!("Creating new wal");
-            WalManager::create(path.clone(), manifest_sender).await?
+            WalManager::create(path.clone(), manifest_sender, wal_receiver, options).await?
         } else {
             info!("Opening existing wal");
-            WalManager::load(path.clone(), manifest_sender).await?
+            WalManager::load(path.clone(), manifest_sender, wal_receiver, options).await?
         };
-        Ok(wal)
+        Ok((wal, wal_sender))
     }
 }
 
@@ -120,10 +171,14 @@ mod tests {
     use std::path::Path;
 
     use crate::db::db::Db;
+    use crate::db::db::DbCmd;
     use crate::db::options::DbOptions;
     use crate::utils::tracing::init_tracer;
-    // use tempfile::tempdir;
-    use tokio::fs::read_to_string;
+    use tempfile::tempdir;
+    use tokio::{
+        fs::{create_dir_all, read_to_string},
+        join,
+    };
     use tracing::{info_span, Instrument};
 
     #[tokio::test]
@@ -132,10 +187,18 @@ mod tests {
         let span = info_span!("open_table");
 
         async move {
-            let path = Path::new("tmp/db");
-            let db = Db::open(path, DbOptions::default()).await.unwrap();
+            // let tmpdir = tempdir().unwrap();
+            // let path = tmpdir.path();
+            let path = Path::new("tmp");
+            create_dir_all(path).await.unwrap();
+            let (mut db, db_sender) = Db::open(path, DbOptions::default()).await.unwrap();
 
-            db.set(b"foo", b"bar").await.unwrap();
+            let _ = join!(db.run(), async {
+                db_sender.send(DbCmd::Set {
+                    key: b"foo".to_vec(),
+                    value: b"bar".to_vec(),
+                })
+            });
             let identity_path = path.join("IDENTITY");
             assert!(identity_path.exists());
             assert_eq!(

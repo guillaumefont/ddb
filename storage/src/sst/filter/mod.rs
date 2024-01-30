@@ -28,7 +28,7 @@ impl SstFilter {
 
     pub fn add(&mut self, key: &[u8]) {
         for func_i in 0..self.num_functions {
-            let mut hasher = Murmur3Hasher::new(func_i);
+            let mut hasher = Murmur3Hasher::new_with_seed(func_i);
             hasher.update(key);
             let index = hasher.finalize();
             let index = index as usize % self.bitvec.len;
@@ -38,7 +38,7 @@ impl SstFilter {
 
     pub fn may_contain(&self, key: &[u8]) -> bool {
         for func_i in 0..self.num_functions {
-            let mut hasher = Murmur3Hasher::new(func_i);
+            let mut hasher = Murmur3Hasher::new_with_seed(func_i);
             hasher.update(key);
             let index = hasher.finalize();
             let index = index as usize % self.bitvec.len;

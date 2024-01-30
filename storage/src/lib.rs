@@ -1,4 +1,4 @@
-mod db;
+pub mod db;
 mod levels;
 mod manifest;
 mod sst;

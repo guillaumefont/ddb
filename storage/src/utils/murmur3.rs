@@ -6,7 +6,11 @@ pub struct Murmur3Hasher {
 }
 
 impl Murmur3Hasher {
-    pub fn new(seed: u32) -> Self {
+    pub fn new() -> Self {
+        Self::new_with_seed(0)
+    }
+
+    pub fn new_with_seed(seed: u32) -> Self {
         let buffer = [0, 0, 0, 0];
         let buffer_len = 0;
         let data_len = 0;
@@ -79,6 +83,12 @@ impl Murmur3Hasher {
 
         self.hash
     }
+
+    pub fn hash(data: &[u8]) -> u32 {
+        let mut hasher = Self::new();
+        hasher.update(data);
+        hasher.finalize()
+    }
 }
 
 #[cfg(test)]
@@ -87,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_murmur3() {
-        let mut hasher = Murmur3Hasher::new(0);
+        let mut hasher = Murmur3Hasher::new_with_seed(0);
         hasher.update(b"hello world");
         let hash = hasher.finalize();
         assert_eq!(hash, 1586663183);
